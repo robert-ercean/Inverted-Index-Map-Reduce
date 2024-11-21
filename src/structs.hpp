@@ -1,6 +1,11 @@
 #include <string>
+#include <pthread.h>
 #include <vector>
 #include <fstream>
+#include <queue>
+#include <unordered_map>
+#include <algorithm>
+#include <atomic>
 
 using namespace std;
 
@@ -11,7 +16,7 @@ typedef struct {
 
 class InFile {
     public:
-        InFile(string filename) : in_filename(filename) {}
+        InFile(string filename) : in_filename(filename), file_idx(0) {}
         
         void parse_filenames() {
             ifstream in("../checker/" + in_filename);
@@ -35,7 +40,15 @@ class InFile {
             }
             in.close();
         }
+
         int file_count;
         string in_filename;
         vector<indexed_file> files;
+        atomic<int>file_idx;
 };
+
+typedef struct {
+    InFile *in_file;
+    int id;
+    unordered_map<string, vector<int>> res;
+} mappers_arg;
