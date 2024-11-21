@@ -16,7 +16,7 @@ typedef struct {
 
 class InFile {
     public:
-        InFile(string filename) : in_filename(filename), file_idx(0) {}
+        InFile(string filename, int next_file_idx) : in_filename(filename), next_file_idx(next_file_idx) {}
         
         void parse_filenames() {
             ifstream in("../checker/" + in_filename);
@@ -41,10 +41,10 @@ class InFile {
             in.close();
         }
 
-        int file_count;
         string in_filename;
+        int file_count;
         vector<indexed_file> files;
-        atomic<int>file_idx;
+        atomic<int>next_file_idx;
 };
 
 typedef struct {
