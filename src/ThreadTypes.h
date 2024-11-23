@@ -12,6 +12,18 @@ class Mapper : public AbstractThread {
 public:
     Mapper(int id, vector<string> files, atomic<int> *idx) : id(id), files(files), fileIdx(idx) {}
     unordered_map<string, vector<int>> res;
+    /* Debugging purposes */
+    void printRes() {
+        cout << "-----------------------------------" << endl;
+        cout << "Mapper " << id << endl;
+        for (auto &pair : res) {
+            cout << pair.first << ": ";
+            for (int &id : pair.second) {
+                cout << id << " ";
+            }
+            cout << endl;
+        }
+    }
 
 protected:
     void strip_word(string &word) {

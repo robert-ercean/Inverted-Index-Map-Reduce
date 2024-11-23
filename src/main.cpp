@@ -27,6 +27,8 @@ int main(int argc, char **argv)
     int mappers_count = atoi(argv[1]);
 
     atomic<int> fileIdx(mappers_count);
+    // pthread_barrier_t barrier;
+
     vector<Mapper> mappers;
     vector<string> files;
     try {
@@ -49,6 +51,7 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < mappers_count; ++i) {
         mappers[i].WaitForInternalThreadToExit();
+        // mappers[i].printRes();
     }
 
     return 0;
