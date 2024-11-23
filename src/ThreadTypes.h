@@ -8,22 +8,68 @@
 
 using namespace std;
 
-class Mapper : public AbstractThread {
+typedef struct {
+    vector<string> files;
+    atomic<int> fileIdx;
+    
+    atomic<int> partialListsIdx;
+    vector<unordered_map<string, vector<int>>> partialLists;
+
+    pthread_barrier_t barrier;
+    pthread_mutex_t partialListsMutex;
+    pthread_mutex_t aggregateListMutex;
+
+    unordered_map<string, vector<int>> aggregateList;
+} filesControlBlock;
+
+
+class Reducer : public AbstractThread {
 public:
-    Mapper(int id, vector<string> files, atomic<int> *idx) : id(id), files(files), fileIdx(idx) {}
-    unordered_map<string, vector<int>> res;
-    /* Debugging purposes */
-    void printRes() {
-        cout << "-----------------------------------" << endl;
-        cout << "Mapper " << id << endl;
-        for (auto &pair : res) {
-            cout << pair.first << ": ";
+    Reducer(filesControlBlock *fcb, int id) : fcb(fcb), id(id) {} 
+protected:
+    void buildAggregateList(int idx) {
+        unordered_map<string, vector<int>> &partialList = fcb->partialLists[idx];
+        unordered_map<string, vector<int>> &aggregateList = fcb->aggregateList;
+        
+        for (auto &pair : partialList) {
+            string word = pair.first;
             for (int &id : pair.second) {
-                cout << id << " ";
+                pthread_mutex_lock(&fcb->aggregateListMutex);
+                aggregateList[word].emplace_back(id);
+                pthread_mutex_unlock(&fcb->aggregateListMutex);
             }
-            cout << endl;
         }
     }
+    virtual void InternalThreadFunc() {
+        pthread_barrier_wait(&fcb->barrier);
+        cout << "Hello from reducer : " << id << endl;
+
+        /* Begin the static index partial list aggregation */
+        int static_idx = id;
+        if (static_idx >= (int) fcb->partialLists.size()) {
+            cerr << "[STATIC] idx of Reducer " << id << " exceeds partial lists size" << endl;
+            return;
+        }
+        buildAggregateList(static_idx);
+
+        /* Begin the dynamic index partial list aggregation */
+        while (true) {
+            int dynamic_idx = fcb->partialListsIdx.fetch_add(1);
+            if (dynamic_idx >= (int) fcb->partialLists.size()) {
+                cerr << "[DYNAMIC] idx of Reducer " << id << " exceeds partial lists size" << endl;
+                return;
+            }
+            buildAggregateList(dynamic_idx);
+        }
+    }
+private:
+    filesControlBlock *fcb;
+    int id;
+};
+
+class Mapper : public AbstractThread {
+public:
+    Mapper(int id, filesControlBlock *fcb) : id(id), fcb(fcb) {}
 
 protected:
     void strip_word(string &word) {
@@ -37,10 +83,10 @@ protected:
         }
     }
 
-    int processFile(int idx) {
-        cout << "Mapper " << id << " is processing file: " << files[idx] << endl;
+    int processFile(int idx, unordered_map<string, vector<int>> *partialList) {
+        cout << "Mapper " << id << " is processing file: " << fcb->files[idx] << endl;
 
-        ifstream input("../checker/" + files[idx]);
+        ifstream input("../checker/" + fcb->files[idx]);
         if (!input.is_open()) {
             return 0;
         }
@@ -48,7 +94,7 @@ protected:
         string word;
         while (input >> word) {
             strip_word(word);
-            vector<int> &arr = res[word];
+            vector<int> &arr = (*partialList)[word];
             int fileId = idx + 1;
             if (find(arr.begin(), arr.end(), fileId) == arr.end()) {
                 arr.push_back(fileId);
@@ -60,33 +106,39 @@ protected:
     }
 
     virtual void InternalThreadFunc() override {
+        unordered_map<string, vector<int>> partialList;
         int static_idx = id;
 
         /* Process the statically assigned file id first */
-        if (static_idx >= (int) files.size()) {
+        if (static_idx >= (int) fcb->files.size()) {
             cerr << "Static IDX exceeds maximum file number, exiting Mapper with ID: " << id << endl;
             return;
         }
-        if (!processFile(static_idx)) {
+        if (!processFile(static_idx, &partialList)) {
             cerr << "[STATIC]Mapper failed to open the file with id: " << static_idx << endl;
             return;
         }
         /* If there are anymore files left to 
          * process, fetch their atomic id and start parsing */ 
         while (true) {
-            int dynamic_idx = fileIdx->fetch_add(1);
+            int dynamic_idx = fcb->fileIdx.fetch_add(1);
             
-            if (dynamic_idx >= (int) files.size())
+            if (dynamic_idx >= (int) fcb->files.size())
                 break;
             
-            if (!processFile(dynamic_idx)) {
+            if (!processFile(dynamic_idx, &partialList)) {
                 cerr << "[DYNAMIC]Mapper failed to open the file with id: " << dynamic_idx << endl;
                 return;
             }
         }
+        /* Now push the newly created partial list to the shared
+         * partial list vector in the file control block */
+        pthread_mutex_lock(&fcb->partialListsMutex);
+        fcb->partialLists.push_back(partialList);
+        pthread_mutex_unlock(&fcb->partialListsMutex);
+        pthread_barrier_wait(&fcb->barrier);
     }
 private:
     int id;
-    vector<string> files;
-    atomic<int> *fileIdx;
+    filesControlBlock *fcb;
 };

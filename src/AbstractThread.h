@@ -17,7 +17,7 @@ public:
 private:
     pthread_t internalThread;
     
-    static void * InternalThreadFuncWrapper(void * ThreadObj) {
+    static void *InternalThreadFuncWrapper(void * ThreadObj) {
         ((AbstractThread *)ThreadObj)->InternalThreadFunc();
         return NULL;
     }
