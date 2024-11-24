@@ -32,11 +32,13 @@ int main(int argc, char **argv)
     vector<Reducer> reducers;
 
     filesControlBlock fcb;
-    pthread_mutex_init(&fcb.aggregateListMutex, NULL);
     pthread_mutex_init(&fcb.partialListsMutex, NULL);
+    pthread_mutex_init(&fcb.aggregateListMutex, NULL);
     pthread_barrier_init(&fcb.barrier, NULL, mappers_count + reducers_count);
+    pthread_barrier_init(&fcb.heapifyBarrier, NULL, reducers_count);
     fcb.fileIdx.store(mappers_count);
     fcb.partialListsIdx.store(reducers_count);
+    fcb.alphabetIdx.store(reducers_count);
 
     try {
         fcb.files = parse_filenames(argv[3]);
@@ -78,17 +80,14 @@ int main(int argc, char **argv)
     // for (auto &list : fcb.partialLists) {
     //     for (auto &pair : list) {
     //         cout << pair.first << ": ";
-    //         for (int &id : pair.second) {
-    //             cout << id << " ";
-    //         }
-    //         cout << endl;
+    //         cout << pair.second << endl;
     //     }
     //     cout << "------------------------------" << endl;
     // }
 
     pthread_barrier_destroy(&fcb.barrier);
+    pthread_barrier_destroy(&fcb.heapifyBarrier);
     pthread_mutex_destroy(&fcb.partialListsMutex);
-    // usleep(1000);
     // cout << endl << endl;
     // for (auto &pair : fcb.aggregateList) {
     //     cout << pair.first << ": ";
