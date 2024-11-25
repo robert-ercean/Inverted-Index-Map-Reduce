@@ -1,8 +1,9 @@
 #include <iostream>
 #include <fstream>
-#include "AbstractThread.h"
-#include "ThreadTypes.h"
+#include "structs.h"
 #include <unistd.h>
+#include "Mapper.h"
+#include "Reducer.h"
 
 using namespace std;
 
@@ -36,6 +37,11 @@ int main(int argc, char **argv)
     pthread_mutex_init(&fcb.aggregateListMutex, NULL);
     pthread_barrier_init(&fcb.barrier, NULL, mappers_count + reducers_count);
     pthread_barrier_init(&fcb.heapifyBarrier, NULL, reducers_count);
+    fcb.pqs.heaps.reserve(ALPHABET_SIZE);
+    fcb.pqs.heapMutex.reserve(ALPHABET_SIZE);
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        pthread_mutex_init(&fcb.pqs.heapMutex[i], NULL);
+    }
     fcb.fileIdx.store(mappers_count);
     fcb.partialListsIdx.store(reducers_count);
     fcb.alphabetIdx.store(reducers_count);
@@ -88,6 +94,9 @@ int main(int argc, char **argv)
     pthread_barrier_destroy(&fcb.barrier);
     pthread_barrier_destroy(&fcb.heapifyBarrier);
     pthread_mutex_destroy(&fcb.partialListsMutex);
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        pthread_mutex_destroy(&fcb.pqs.heapMutex[i]);
+    }
     // cout << endl << endl;
     // for (auto &pair : fcb.aggregateList) {
     //     cout << pair.first << ": ";
