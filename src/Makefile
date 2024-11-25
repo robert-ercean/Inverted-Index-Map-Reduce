@@ -3,3 +3,4 @@ build:
 clean:
 		rm tema1
 		rm -rf out/*
+		rm -rf *.txt

@@ -20,24 +20,27 @@ bool pqComparator(const pair<string, vector<int>> &a, const pair<string, vector<
     return a.first > b.first;
 }
 
-typedef struct {
-    vector<pthread_mutex_t> heapMutex;
-    vector<priority_queue<pair<string, vector<int>>, vector<pair<string, vector<int>>>, decltype(&pqComparator)>> heaps;
-} heaps;
 
 typedef struct {
-    vector<string> files;
-    atomic<int> fileIdx;
-    
-    atomic<int> partialListsIdx;
-    vector<unordered_map<string, int>> partialLists;
+    string filename;
+    int id;
+    long size;
+} file;
 
-    pthread_barrier_t barrier;
-    pthread_barrier_t heapifyBarrier;
-    pthread_mutex_t partialListsMutex;
-    pthread_mutex_t aggregateListMutex;
+typedef struct {
+    string word;
+    int id;
+} partial_entry;
 
-    unordered_map<string, vector<int>> aggregateList;
-    atomic<int> alphabetIdx;
-    heaps pqs;
+bool filesPqComparator(const file& a, const file& b) {
+    return a.size < b.size;
+}
+
+typedef struct {
+    pthread_barrier_t reduceBarrier;
+    pthread_mutex_t filesMutex;
+
+    priority_queue<file, vector<file>, decltype(&filesPqComparator)> filesPq{filesPqComparator};
+    vector<vector<vector<partial_entry>>> aggregateLists;
+    atomic<int>idx;
 } filesControlBlock;

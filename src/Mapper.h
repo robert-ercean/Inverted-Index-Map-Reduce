@@ -1,10 +1,11 @@
 #include "structs.h"
+#include <unordered_set>
 
 using namespace std;
 
 class Mapper : public AbstractThread {
 public:
-    Mapper(int id, filesControlBlock *fcb) : id(id), fcb(fcb) {}
+    Mapper(filesControlBlock *fcb, int id) : fcb(fcb), id(id) {}
 
 protected:
     void strip_word(string &word) {
@@ -18,59 +19,48 @@ protected:
         }
     }
 
-    int processFile(int idx) {
-        unordered_map<string, int> partialList;
-        cout << "Mapper " << id << " is processing file: " << fcb->files[idx] << endl;
-
-        ifstream input("../checker/" + fcb->files[idx]);
-        if (!input.is_open()) {
-            return 0;
-        }
-   
-        string word;
-        while (input >> word) {
-            strip_word(word);
-            int fileId = idx + 1;
-            partialList[word] = fileId;
-        }
-        /* Now push the newly created partial list to the shared
-         * partial list vector in the file control block */
-        pthread_mutex_lock(&fcb->partialListsMutex);
-        fcb->partialLists.push_back(partialList);
-        pthread_mutex_unlock(&fcb->partialListsMutex);
-
-        input.close();
-        return 1;
-    }
-
     virtual void InternalThreadFunc() override {
-        int static_idx = id;
-
-        /* Process the statically assigned file id first */
-        if (static_idx >= (int) fcb->files.size()) {
-            cerr << "Static IDX exceeds maximum file number, exiting Mapper with ID: " << id << endl;
-            return;
-        }
-        if (!processFile(static_idx)) {
-            cerr << "[STATIC]Mapper failed to open the file with id: " << static_idx << endl;
-            return;
-        }
-        /* If there are anymore files left to 
-         * process, fetch their atomic id and start parsing */ 
+        /* Get file to process */
+        vector<vector<partial_entry>> tmp(ALPHABET_SIZE);
         while (true) {
-            int dynamic_idx = fcb->fileIdx.fetch_add(1);
-            
-            if (dynamic_idx >= (int) fcb->files.size())
+            unordered_set<string> seen;
+            pthread_mutex_lock(&fcb->filesMutex);
+            if (fcb->filesPq.empty()) {
+                pthread_mutex_unlock(&fcb->filesMutex);
                 break;
-            
-            if (!processFile(dynamic_idx)) {
-                cerr << "[DYNAMIC]Mapper failed to open the file with id: " << dynamic_idx << endl;
+            }
+            file f = fcb->filesPq.top();
+            string filename = f.filename;
+            cout << "Mapper " << id << " processing " << filename << endl;
+            int id = f.id;
+            fcb->filesPq.pop();
+            pthread_mutex_unlock(&fcb->filesMutex);
+
+            string word;
+            ifstream in(filename);
+            if (!in.is_open()) {
+                cerr << "Failed to open file in Mapper: " << id << endl;
                 return;
             }
+            while (in >> word) {
+                strip_word(word);
+                char ch = word[0];
+                if (ch < 'a' || ch > 'z') continue;
+                /* Only add the word if it hasn't been already added */
+                if (seen.insert(word).second) {
+                    partial_entry e;
+                    e.word = word;
+                    e.id = f.id;
+                    tmp[ch - 'a'].push_back(e);
+                }
+            }
         }
-        pthread_barrier_wait(&fcb->barrier);
+        for (int c = 0; c < ALPHABET_SIZE; ++c) {
+            fcb->aggregateLists[c][id] = move(tmp[c]);
+        }
+        pthread_barrier_wait(&fcb->reduceBarrier);
     }
 private:
-    int id;
     filesControlBlock *fcb;
+    int id;
 };

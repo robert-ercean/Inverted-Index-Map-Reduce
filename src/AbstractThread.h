@@ -23,6 +23,5 @@ private:
     }
 
 protected:
-    int id;
     virtual void InternalThreadFunc() = 0;
 };

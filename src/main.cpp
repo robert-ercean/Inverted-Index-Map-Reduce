@@ -4,24 +4,30 @@
 #include <unistd.h>
 #include "Mapper.h"
 #include "Reducer.h"
+#include <filesystem>
 
 using namespace std;
 
-vector<string> parse_filenames(string in_filename) {
-    vector<string> files;
+void parse_filenames(string in_filename, filesControlBlock *fcb) {
     ifstream in("../checker/" + in_filename);
     if (!in.is_open()) {
         in.close();
         throw runtime_error("Err: Input File failed to open: " + in_filename);
     }
+
     string line;
     /* Ingore the first line since we don't need the file count */
     getline(in, line);
+    int count = 1;
     while (getline(in, line)) {
-        files.push_back(line);
+        file f;
+        f.filename = "../checker/" + line;
+        filesystem::path p(f.filename);
+        f.size = filesystem::file_size(p);
+        f.id = count++;
+        fcb->filesPq.push(f);
     }
     in.close();
-    return files;
 }
 
 int main(int argc, char **argv)
@@ -33,32 +39,27 @@ int main(int argc, char **argv)
     vector<Reducer> reducers;
 
     filesControlBlock fcb;
-    pthread_mutex_init(&fcb.partialListsMutex, NULL);
-    pthread_mutex_init(&fcb.aggregateListMutex, NULL);
-    pthread_barrier_init(&fcb.barrier, NULL, mappers_count + reducers_count);
-    pthread_barrier_init(&fcb.heapifyBarrier, NULL, reducers_count);
-    fcb.pqs.heaps.reserve(ALPHABET_SIZE);
-    fcb.pqs.heapMutex.reserve(ALPHABET_SIZE);
-    for (int i = 0; i < ALPHABET_SIZE; i++) {
-        pthread_mutex_init(&fcb.pqs.heapMutex[i], NULL);
+    fcb.idx.store(0);
+    fcb.aggregateLists.resize(ALPHABET_SIZE);
+    for (int c = 0; c < ALPHABET_SIZE; ++c) {
+        fcb.aggregateLists[c].resize(mappers_count);
     }
-    fcb.fileIdx.store(mappers_count);
-    fcb.partialListsIdx.store(reducers_count);
-    fcb.alphabetIdx.store(reducers_count);
-
     try {
-        fcb.files = parse_filenames(argv[3]);
+        parse_filenames(argv[3], &fcb);
     } catch (const exception& e) {
         cerr << e.what() << endl;
         return -1;
     }
 
+    pthread_mutex_init(&fcb.filesMutex, NULL);
+    pthread_barrier_init(&fcb.reduceBarrier, NULL, mappers_count + reducers_count);
+
     for (int i = 0; i < mappers_count + reducers_count; ++i) {
         if (i >= mappers_count) {
-            reducers.emplace_back(Reducer(&fcb, i - mappers_count));
+            reducers.emplace_back(Reducer(&fcb, i - mappers_count, reducers_count));
             continue;
         }
-        mappers.emplace_back(Mapper(i, &fcb));
+        mappers.emplace_back(Mapper(&fcb, i));
     }
 
     for (int i = 0; i < mappers_count + reducers_count; ++i) {
@@ -82,28 +83,8 @@ int main(int argc, char **argv)
         }
         mappers[i].WaitForInternalThreadToExit();
     }
+    pthread_mutex_destroy(&fcb.filesMutex);
+    pthread_barrier_destroy(&fcb.reduceBarrier);
 
-    // for (auto &list : fcb.partialLists) {
-    //     for (auto &pair : list) {
-    //         cout << pair.first << ": ";
-    //         cout << pair.second << endl;
-    //     }
-    //     cout << "------------------------------" << endl;
-    // }
-
-    pthread_barrier_destroy(&fcb.barrier);
-    pthread_barrier_destroy(&fcb.heapifyBarrier);
-    pthread_mutex_destroy(&fcb.partialListsMutex);
-    for (int i = 0; i < ALPHABET_SIZE; i++) {
-        pthread_mutex_destroy(&fcb.pqs.heapMutex[i]);
-    }
-    // cout << endl << endl;
-    // for (auto &pair : fcb.aggregateList) {
-    //     cout << pair.first << ": ";
-    //     for (auto &id : pair.second) {
-    //         cout << id << " ";
-    //     }
-    //     cout << endl;
-    // }
     return 0;
 }
