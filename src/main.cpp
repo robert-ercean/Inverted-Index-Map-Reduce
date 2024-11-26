@@ -39,10 +39,22 @@ int main(int argc, char **argv)
     vector<Reducer> reducers;
 
     filesControlBlock fcb;
+    fcb.heaps.resize(ALPHABET_SIZE);
+    fcb.heapIndices.resize(ALPHABET_SIZE);
+    for (int i = 0; i < ALPHABET_SIZE; ++i) {
+        fcb.heapIndices[i] = i;
+    }
+    for (int i = 0; i < ALPHABET_SIZE; ++i) {
+        fcb.heaps[i] = priority_queue<entry, vector<entry>, decltype(&pqComparator)>(pqComparator);
+    }
     fcb.idx.store(0);
-    fcb.aggregateLists.resize(ALPHABET_SIZE);
-    for (int c = 0; c < ALPHABET_SIZE; ++c) {
-        fcb.aggregateLists[c].resize(mappers_count);
+    fcb.heapsMutexes.resize(ALPHABET_SIZE);
+    fcb.aggregateLists.resize(reducers_count);
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        pthread_mutex_init(&fcb.heapsMutexes[i], NULL);
+    }
+    for (int r = 0; r < reducers_count; ++r) {
+        fcb.aggregateLists[r].resize(mappers_count);
     }
     try {
         parse_filenames(argv[3], &fcb);
@@ -53,13 +65,14 @@ int main(int argc, char **argv)
 
     pthread_mutex_init(&fcb.filesMutex, NULL);
     pthread_barrier_init(&fcb.reduceBarrier, NULL, mappers_count + reducers_count);
-
+    pthread_barrier_init(&fcb.writeBarrier, NULL, reducers_count);
+    pthread_barrier_init(&fcb.heapifyBarrier, NULL, reducers_count);
     for (int i = 0; i < mappers_count + reducers_count; ++i) {
         if (i >= mappers_count) {
             reducers.emplace_back(Reducer(&fcb, i - mappers_count, reducers_count));
             continue;
         }
-        mappers.emplace_back(Mapper(&fcb, i));
+        mappers.emplace_back(Mapper(&fcb, i, reducers_count));
     }
 
     for (int i = 0; i < mappers_count + reducers_count; ++i) {
@@ -83,8 +96,13 @@ int main(int argc, char **argv)
         }
         mappers[i].WaitForInternalThreadToExit();
     }
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        pthread_mutex_destroy(&fcb.heapsMutexes[i]);
+    }
     pthread_mutex_destroy(&fcb.filesMutex);
     pthread_barrier_destroy(&fcb.reduceBarrier);
+    pthread_barrier_destroy(&fcb.writeBarrier);
+    pthread_barrier_destroy(&fcb.heapifyBarrier);
 
     return 0;
 }

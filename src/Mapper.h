@@ -5,7 +5,7 @@ using namespace std;
 
 class Mapper : public AbstractThread {
 public:
-    Mapper(filesControlBlock *fcb, int id) : fcb(fcb), id(id) {}
+    Mapper(filesControlBlock *fcb, int id, int reducersCount) : fcb(fcb), id(id), reducersCount(reducersCount) {}
 
 protected:
     void strip_word(string &word) {
@@ -21,7 +21,7 @@ protected:
 
     virtual void InternalThreadFunc() override {
         /* Get file to process */
-        vector<vector<partial_entry>> tmp(ALPHABET_SIZE);
+        vector<vector<partial_entry>> tmp(reducersCount);
         while (true) {
             unordered_set<string> seen;
             pthread_mutex_lock(&fcb->filesMutex);
@@ -51,16 +51,18 @@ protected:
                     partial_entry e;
                     e.word = word;
                     e.id = f.id;
-                    tmp[ch - 'a'].push_back(e);
+                    int reducerId = hash<string>{}(word) % reducersCount;
+                    tmp[reducerId].push_back(e);
                 }
             }
         }
-        for (int c = 0; c < ALPHABET_SIZE; ++c) {
-            fcb->aggregateLists[c][id] = move(tmp[c]);
+        for (int r = 0; r < reducersCount; ++r) {
+            fcb->aggregateLists[r][id] = move(tmp[r]);
         }
         pthread_barrier_wait(&fcb->reduceBarrier);
     }
 private:
     filesControlBlock *fcb;
     int id;
+    int reducersCount;
 };
