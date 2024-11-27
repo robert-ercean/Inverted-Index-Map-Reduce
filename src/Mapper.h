@@ -3,12 +3,30 @@
 
 using namespace std;
 
+#include "structs.h"
+#include <unordered_set>
+#include <queue>
+#include <cctype> // for tolower
+#include <fstream>
+#include <iostream>
+#include <vector>
+#include <string>
+
+using namespace std;
+
 class Mapper : public AbstractThread {
 public:
-    Mapper(filesControlBlock *fcb, int id, int reducersCount) : fcb(fcb), id(id), reducersCount(reducersCount) {}
+    Mapper(filesControlBlock *fcb, int id, int reducersCount, vector<file> &&files)
+        : fcb(fcb), id(id), reducersCount(reducersCount), files(move(files)) {
+        heaps.resize(26); // 26 characters in the alphabet
+        for (int i = 0; i < 26; ++i) {
+            heaps[i] = priority_queue<entry, vector<entry>, decltype(&pqComparator)>(pqComparator);
+        }
+    }
 
 protected:
-    void strip_word(string &word) {
+    // Helper function to clean up words
+    bool strip_word(string &word) {
         for (int i = 0; i < (int) word.size(); i++) {
             char c = word[i];
             if ((c < 'A' || c > 'Z') && (c < 'a' || c > 'z')) {
@@ -17,52 +35,51 @@ protected:
             }
             word[i] = tolower(word[i]);
         }
+        return !word.empty();
     }
 
+    // Internal thread function
     virtual void InternalThreadFunc() override {
-        /* Get file to process */
-        vector<vector<partial_entry>> tmp(reducersCount);
-        while (true) {
-            unordered_set<string> seen;
-            pthread_mutex_lock(&fcb->filesMutex);
-            if (fcb->filesPq.empty()) {
-                pthread_mutex_unlock(&fcb->filesMutex);
-                break;
-            }
-            file f = fcb->filesPq.top();
-            string filename = f.filename;
-            cout << "Mapper " << id << " processing " << filename << endl;
-            int id = f.id;
-            fcb->filesPq.pop();
-            pthread_mutex_unlock(&fcb->filesMutex);
-
-            string word;
-            ifstream in(filename);
+        intmax_t max = 0;
+        unordered_map<string, vector<int>> map;
+        // Process each file assigned to this Mapper
+        for (const file &f : files) {
+            ifstream in(f.filename);
             if (!in.is_open()) {
                 cerr << "Failed to open file in Mapper: " << id << endl;
-                return;
+                continue;
             }
+
+            string word;
             while (in >> word) {
-                strip_word(word);
-                char ch = word[0];
-                if (ch < 'a' || ch > 'z') continue;
-                /* Only add the word if it hasn't been already added */
-                if (seen.insert(word).second) {
-                    partial_entry e;
-                    e.word = word;
-                    e.id = f.id;
-                    int reducerId = hash<string>{}(word) % reducersCount;
-                    tmp[reducerId].push_back(e);
-                }
+                if (!strip_word(word)) continue;
+                max++;
+                if (find(map[word].begin(), map[word].end(), f.id) == map[word].end())
+                    map[word].push_back(f.id);
             }
         }
-        for (int r = 0; r < reducersCount; ++r) {
-            fcb->aggregateLists[r][id] = move(tmp[r]);
+        for (auto &pair : map) {
+            entry e;
+            e.word = pair.first;
+            e.ids = pair.second;
+            char ch = pair.first[0];
+            heaps[ch - 'a'].push(e);
         }
+        // Move the local heaps to the shared structure
+        for (int i = 0; i < 26; ++i) {
+            fcb->heaps[i][id] = move(heaps[i]);
+        }
+
+        cout << "Mapper " << id << " processed a total of " << max << " words" << endl;
         pthread_barrier_wait(&fcb->reduceBarrier);
     }
+
 private:
     filesControlBlock *fcb;
     int id;
     int reducersCount;
+    vector<file> files;
+
+    // One heap per character (26 heaps for 'a' to 'z')
+    vector<priority_queue<entry, vector<entry>, decltype(&pqComparator)>> heaps;
 };

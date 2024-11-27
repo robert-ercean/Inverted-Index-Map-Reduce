@@ -28,13 +28,8 @@ bool pqComparator(const entry &a, const entry &b) {
 typedef struct {
     string filename;
     int id;
-    long size;
+    intmax_t size;
 } file;
-
-typedef struct {
-    string word;
-    int id;
-} partial_entry;
 
 
 bool filesPqComparator(const file& a, const file& b) {
@@ -47,15 +42,12 @@ bool comp(const priority_queue<entry, vector<entry>, decltype(&pqComparator)>&a,
 
 typedef struct {
     pthread_barrier_t reduceBarrier;
-    pthread_mutex_t filesMutex;
+    pthread_barrier_t writeBarrier;
     priority_queue<file, vector<file>, decltype(&filesPqComparator)> filesPq{filesPqComparator};
 
-    vector<vector<vector<partial_entry>>> aggregateLists; // [reducersCount][mappersCount][partialEntry]
-
-    vector<pthread_mutex_t> heapsMutexes;
-    vector<priority_queue<entry, vector<entry>, decltype(&pqComparator)>> heaps;
-    pthread_barrier_t writeBarrier;
-    pthread_barrier_t heapifyBarrier;
-    vector<int> heapIndices;
-    atomic<int> idx;
+    vector<vector<priority_queue<entry, vector<entry>, decltype(&pqComparator)>>> heaps;
+    vector<priority_queue<entry, vector<entry>, decltype(&pqComparator)>> heapsf;
+    atomic<int>idx{0};
+    
+    vector<file> allFiles;
 } filesControlBlock;
