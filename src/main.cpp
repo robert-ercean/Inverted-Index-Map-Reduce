@@ -25,36 +25,9 @@ void parse_filenames(string in_filename, filesControlBlock *fcb) {
         filesystem::path p(f.filename);
         f.size = filesystem::file_size(p);
         f.id = count++;
-        fcb->filesPq.push(f);
+        fcb->allFiles.push_back(f);
     }
     in.close();
-}
-
-void writeFiles(filesControlBlock &fcb) {
-    for (int i = 0; i < ALPHABET_SIZE; ++i) {
-        auto &heap = fcb.heapsf[i];
-        /* Write the heap to its file */
-        string filename = string(1, 'a' + i) + ".txt";
-        ofstream out(filename);
-        if (!out.is_open()) {
-            cerr << "Error in opening file " << filename << " during writing phase in heapify()" << endl;
-            return;
-        }
-        while(!heap.empty()) {
-            entry e = heap.top();
-            int arrSize = (int) e.ids.size();
-            string line = e.word + ":[";
-            for (int i = 0; i < arrSize; i++) {
-                line += to_string(e.ids[i]);
-                string delim = (i == arrSize - 1) ? "" : " ";
-                line += delim;
-            }
-            line += "]\n";
-            out << line;
-            heap.pop();
-        }
-        out.close();
-    }
 }
 
 int main(int argc, char **argv)
@@ -64,20 +37,19 @@ int main(int argc, char **argv)
 
     vector<Mapper> mappers;
     vector<Reducer> reducers;
-    chrono::duration<double>time{0};
-    auto start = chrono::high_resolution_clock::now();
     filesControlBlock fcb;
-    fcb.heapsf.resize(ALPHABET_SIZE);
+
+    /* Some memory pre-allocation to save time */
+    fcb.chFreq.resize(ALPHABET_SIZE, 0);
+    fcb.mergedHeaps.resize(ALPHABET_SIZE);
     for (int i = 0; i < ALPHABET_SIZE; ++i) {
-        fcb.heapsf[i] = priority_queue<entry, vector<entry>, decltype(&pqComparator)>(pqComparator);
+        fcb.mergedHeaps[i] = priority_queue<entry, vector<entry>, decltype(&pqComparator)>(pqComparator);
     }
-    fcb.heaps.resize(ALPHABET_SIZE);
-    for (int i = 0; i < ALPHABET_SIZE; ++i) {
-        fcb.heaps[i].resize(mappers_count);
-        for (int j = 0; j < mappers_count; ++j) {
-            fcb.heaps[i][j] = priority_queue<entry, vector<entry>, decltype(&pqComparator)>(pqComparator);
-        }
+    fcb.partialEntries.resize(ALPHABET_SIZE);
+    for (int ch = 0; ch < ALPHABET_SIZE; ++ch) {
+        fcb.partialEntries[ch].resize(mappers_count);
     }
+
     try {
         parse_filenames(argv[3], &fcb);
     } catch (const exception& e) {
@@ -85,35 +57,28 @@ int main(int argc, char **argv)
         return -1;
     }
 
-
-    // Extract files from filesPq (assuming it's populated earlier)
-    while (!fcb.filesPq.empty()) {
-        fcb.allFiles.push_back(fcb.filesPq.top());
-        fcb.filesPq.pop();
-    }
-
-    // Sort files in descending order of size
-    std::sort(fcb.allFiles.begin(), fcb.allFiles.end(), [](const file& a, const file& b) {
+    /* Sort the files in descending order by size*/
+    sort(fcb.allFiles.begin(), fcb.allFiles.end(), [](const file& a, const file& b) {
         return a.size > b.size;
     });
 
-    // Initialize Mapper workloads
-    std::vector<std::vector<file>> mapperFiles(mappers_count);
-    std::vector<intmax_t> mapperWorkloads(mappers_count, 0);
+    vector<vector<file>> mapperFiles(mappers_count);
+    vector<intmax_t> mapperWorkloads(mappers_count, 0);
 
-    // Assign files to Mappers to balance workloads
+    /* Manage the work of each Mapper using a greedy load balancing logic */
     for (const file& f : fcb.allFiles) {
-        // Find the Mapper with the minimum current workload
-        auto minIt = std::min_element(mapperWorkloads.begin(), mapperWorkloads.end());
-        int mapperIndex = std::distance(mapperWorkloads.begin(), minIt);
+        /* Iterator pointing to the Mapper with the lowest current workload */
+        auto minIter = min_element(mapperWorkloads.begin(), mapperWorkloads.end());
+        /* Index of the Mapper with the lowest workload */
+        int mapperIndex = distance(mapperWorkloads.begin(), minIter);
 
-        // Assign file to the Mapper
+        /* Assign the curr file to that Mapper and updates the workloads counters */
         mapperFiles[mapperIndex].push_back(f);
         mapperWorkloads[mapperIndex] += f.size;
     }
 
+    /* Construct the workers and the reduce phase barrier */
     pthread_barrier_init(&fcb.reduceBarrier, NULL, mappers_count + reducers_count);
-    pthread_barrier_init(&fcb.writeBarrier, NULL, reducers_count);
     for (int i = 0; i < mappers_count + reducers_count; ++i) {
         if (i >= mappers_count) {
             reducers.emplace_back(Reducer(&fcb, i - mappers_count, reducers_count));
@@ -122,6 +87,7 @@ int main(int argc, char **argv)
         mappers.emplace_back(Mapper(&fcb, i, reducers_count, move(mapperFiles[i])));
     }
 
+    /* Start the Workers */
     for (int i = 0; i < mappers_count + reducers_count; ++i) {
         if (i >= mappers_count) {
             if (!reducers[i - mappers_count].startInternalThread()) {
@@ -136,6 +102,7 @@ int main(int argc, char **argv)
         }
     }
 
+    /* Wait for the workers to stop */
     for (int i = 0; i < mappers_count + reducers_count; ++i) {
         if (i >= mappers_count) {
             reducers[i - mappers_count].WaitForInternalThreadToExit();
@@ -145,12 +112,6 @@ int main(int argc, char **argv)
     }
 
     pthread_barrier_destroy(&fcb.reduceBarrier);
-    pthread_barrier_destroy(&fcb.writeBarrier);
 
-    writeFiles(fcb);
-
-    auto end = chrono::high_resolution_clock::now();
-    time += end - start;
-    cout << "Time: " << time.count() << endl;
     return 0;
 }

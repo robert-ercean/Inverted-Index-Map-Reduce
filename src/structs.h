@@ -18,6 +18,7 @@ typedef struct {
     vector<int> ids;
 } entry;
 
+/* Comparator used in building the partial / merged char-specific heaps */
 bool pqComparator(const entry &a, const entry &b) {
     if (a.ids.size() != b.ids.size()) {
         return a.ids.size() < b.ids.size();
@@ -45,9 +46,10 @@ typedef struct {
     pthread_barrier_t writeBarrier;
     priority_queue<file, vector<file>, decltype(&filesPqComparator)> filesPq{filesPqComparator};
 
-    vector<vector<priority_queue<entry, vector<entry>, decltype(&pqComparator)>>> heaps;
-    vector<priority_queue<entry, vector<entry>, decltype(&pqComparator)>> heapsf;
+    /* Indexed by [ALPHABET_CHAR][MAPPER_ID][ENTRY] */
+    vector<vector<vector<entry>>> partialEntries;
+    vector<priority_queue<entry, vector<entry>, decltype(&pqComparator)>> mergedHeaps;
     atomic<int>idx{0};
-    
+    vector<intmax_t> chFreq;
     vector<file> allFiles;
 } filesControlBlock;
