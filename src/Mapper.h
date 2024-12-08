@@ -17,11 +17,12 @@ using namespace std;
 class Mapper : public AbstractThread {
 public:
     Mapper(filesControlBlock *fcb, int id, int reducersCount, vector<file> &&files)
-        : fcb(fcb), id(id), reducersCount(reducersCount), files(move(files)) {
+        : fcb(fcb), mapperId(id), reducersCount(reducersCount), files(move(files)) {
     }
 
 protected:
-    /* Helper function to clean up words, returns true unless the processed word is an empty string */
+    /* Helper function to clean up words, returns false if the processed word
+     * is an empty string after trimming */
     bool strip_word(string &word) {
         for (int i = 0; i < (int) word.size(); i++) {
             char c = word[i];
@@ -42,7 +43,7 @@ protected:
         for (const file &f : files) {
             ifstream in(f.filename);
             if (!in.is_open()) {
-                cerr << "Failed to open file in Mapper: " << id << endl;
+                cerr << "Failed to open file in Mapper: " << mapperId << endl;
                 continue;
             }
 
@@ -51,7 +52,7 @@ protected:
                 max++;
                 if (!strip_word(word)) continue;
                 /* First place the entries in a map for quick indexing and checking if the
-                 * file number associated with that word already exists in its id array */
+                 * file number associated with that word already exists in its ids array */
                 if (find(map[word].begin(), map[word].end(), f.id) == map[word].end())
                     map[word].push_back(f.id);
             }
@@ -63,16 +64,16 @@ protected:
             e.word = pair.first;
             e.ids = pair.second;
             char ch = pair.first[0];
-            fcb->chFreq[ch - 'a']++;
-            fcb->partialEntries[ch - 'a'][id].push_back(e);
+            fcb->chFreq[mapperId][ch - 'a']++;
+            fcb->partialEntries[ch - 'a'][mapperId].push_back(e);
         }
-        cout << "Mapper " << id << " processed a total of " << max << " words" << endl;
+        cout << "Mapper " << mapperId << " processed a total of " << max << " words" << endl;
         pthread_barrier_wait(&fcb->reduceBarrier);
     }
 
 private:
     filesControlBlock *fcb;
-    int id;
+    int mapperId;
     int reducersCount;
     vector<file> files;
 };

@@ -21,6 +21,7 @@ protected:
             cerr << "Error in opening file " << filename << " during writing phase" << endl;
             return;
         }
+        /* Format each entry */
         while(!heap.empty()) {
             entry e = heap.top();
             int arrSize = (int) e.ids.size();
@@ -37,13 +38,16 @@ protected:
         out.close();
     }
 
-    void mergeHeaps(int ch) {
+    void mergeHeap(int ch) {
+        /* Use a map for ~O(1) key(word) access */
         unordered_map<string, vector<int>> mergedEntries;
-        int mappersCount = (int)fcb->partialEntries[ch].size();
+        int mappersCount = fcb->mappersCount;
+        /* Construct the char-specific heap by iterating over each Mapper's partial entry sublist 
+         * of that character */
         for (int mapperId = 0; mapperId < mappersCount; ++mapperId) {
-            auto &localHeap = fcb->partialEntries[ch][mapperId];
+            auto &mapperCharSublist = fcb->partialEntries[ch][mapperId];
 
-            for(auto &e : localHeap) {
+            for(auto &e : mapperCharSublist) {
                 total++;
                 /* Merge the fileIDs arrays for the same word */
                 mergedEntries[e.word].insert(mergedEntries[e.word].end(),
@@ -54,6 +58,7 @@ protected:
             sort(ids.begin(), ids.end());
             fcb->mergedHeaps[ch].push({word, ids});
         }
+        /* Call the file-writing to disk procedure */
         writeCharFile(ch);
     }
 
@@ -75,13 +80,16 @@ protected:
                 }
             }
             letter[ch] = minReducerId;
-            reducerLoads[minReducerId] += fcb->chFreq[ch];
+            /* Combine the frequencies for each character obtained by each Mapper */
+            for (int i = 0; i < fcb->mappersCount; ++i) {
+                reducerLoads[minReducerId] += fcb->chFreq[i][ch];
+            }
         }
 
         /* Build the heap and write it to file for each char assigned to this Reducer */
         for (int ch = 0; ch < ALPHABET_SIZE; ++ch) {
             if (letter[ch] == id) {
-                mergeHeaps(ch);
+                mergeHeap(ch);
             }
         }
 
